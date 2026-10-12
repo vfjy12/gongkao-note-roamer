@@ -950,7 +950,8 @@
   outline-offset: 1px;
 }
 
-.gkr-root button.gkr-ink-toggle.is-active {
+.gkr-root button.gkr-ink-toggle.is-active,
+.gkr-root button.gkr-ink-eraser.is-active {
   color: var(--text-on-accent);
   background: var(--interactive-accent);
 }
