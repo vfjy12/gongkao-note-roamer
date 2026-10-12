@@ -2470,6 +2470,7 @@ class RoamerView extends ItemView {
     const answerContent = answerSection.createDiv({ cls: 'gkr-markdown gkr-selectable' });
     await this.renderMarkdown(answerContent, parsed.answerMarkdown, question.path);
     this.watchSelection(answerContent, question, '答案解析', parsed);
+    await this.renderTechniqueInsights(answerSection, question);
     const tools = article.createDiv({ cls: 'gkr-paper-inline-tools' });
     const complete = this.button(tools, question.intensiveDone ? '取消精读完成' : '标记精读完成', async () => {
       complete.disabled = true;
@@ -2788,8 +2789,60 @@ class RoamerView extends ItemView {
     const answerContent = answerSection.createDiv({ cls: 'gkr-markdown gkr-selectable' });
     await this.renderMarkdown(answerContent, parsed.answerMarkdown, question.path);
     this.watchSelection(answerContent, question, '答案解析', parsed);
-    if (this.studyMode === 'guess') this.renderGuessReflection(answerSection, question);
+    await this.renderTechniqueInsights(answerSection, question);
     return answerSection;
+  }
+
+  async renderTechniqueInsights(parent, question) {
+    const panel = parent.createEl('section', { cls: 'gkr-technique-insights' });
+    panel.createEl('h4', { text: '解题思路与技巧' });
+    const actions = panel.createDiv({ cls: 'gkr-paper-inline-tools' });
+    const handbook = this.app.plugins?.plugins?.['exam-technique-handbook'];
+    if (handbook?.createQuestionAnalysis) {
+      this.button(actions, '添加老师 / 个人思路', () => handbook.createQuestionAnalysis(question.path), 'gkr-tool-button');
+      this.button(actions, '技巧宝典', () => handbook.open(), 'gkr-tool-button');
+    } else {
+      panel.createEl('p', { text: '启用技巧宝典后，可在这里添加关联本题的老师分析。', cls: 'gkr-muted' });
+    }
+    const content = panel.createDiv();
+    let generation = 0;
+    const refresh = async () => {
+      const token = ++generation;
+      content.empty();
+      const entries = this.app.vault.getMarkdownFiles().map(file => ({ file, fm: this.app.metadataCache.getFileCache(file)?.frontmatter || {} }))
+        .filter(({ file, fm }) => {
+          if (fm.note_type !== 'technique_analysis' || typeof fm.question_note !== 'string') return false;
+          const link = fm.question_note.trim().replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].split('#')[0];
+          const resolved = this.app.vault.getAbstractFileByPath(link) || this.app.metadataCache.getFirstLinkpathDest(link, file.path);
+          return resolved?.path === question.path;
+        }).sort((a, b) => String(a.fm.teacher || '').localeCompare(String(b.fm.teacher || '')) || a.file.path.localeCompare(b.file.path));
+      if (!entries.length) content.createEl('p', { text: '本题尚未关联老师分析。点击“添加老师 / 个人思路”，填写老师及内容后保存。', cls: 'gkr-muted' });
+      for (const { file, fm } of entries) {
+        const item = content.createEl('details', { cls: 'gkr-technique-entry' });
+        item.createEl('summary', { text: `${fm.teacher || '个人 / 未标老师'} · ${fm.evidence_role || '待核对'} · ${file.basename}` });
+        const body = item.createDiv({ cls: 'gkr-markdown' });
+        let loaded = false;
+        item.addEventListener('toggle', async () => {
+          if (!item.open || loaded) return;
+          loaded = true;
+          try {
+            const source = await this.app.vault.read(file);
+            if (generation !== token || !body.isConnected) return;
+            this.button(body, '编辑原分析', () => this.app.workspace.openLinkText(file.path, '', 'tab'), 'gkr-tool-button');
+            await this.renderMarkdown(body, source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, ''), file.path);
+          } catch (error) { loaded = false; new Notice(`分析读取失败：${error.message}`); }
+        });
+      }
+      const guess = content.createDiv({ cls: 'gkr-technique-guess' });
+      guess.createEl('h5', { text: '蒙题技巧 · 个人总结' });
+      const summary = this.answers.get(question.path)?.techniqueSummary
+        ?? this.app.metadataCache.getFileCache(question.file)?.frontmatter?.guess_technique_summary;
+      if (typeof summary === 'string' && summary.trim()) await this.renderMarkdown(guess, summary, question.path);
+      else guess.createEl('p', { text: '尚未记录蒙题技巧。蒙题提交后，可在此保存排除依据和判断线索。', cls: 'gkr-muted' });
+      if (this.studyMode === 'guess') this.renderGuessReflection(guess, question);
+    };
+    this.button(actions, '刷新思路', () => refresh().catch(error => new Notice(`加载失败：${error.message}`)), 'gkr-tool-button');
+    await refresh();
   }
 
   async renderAnswerControls(parent, question, parsed, { rerender = true } = {}) {
@@ -3690,6 +3743,7 @@ class RoamerView extends ItemView {
     const answerContent = answerSection.createDiv({ cls: 'gkr-markdown gkr-selectable' });
     await this.renderMarkdown(answerContent, parsed.answerMarkdown, question.path);
     this.watchSelection(answerContent, question, '答案解析', parsed);
+    await this.renderTechniqueInsights(answerSection, question);
     const bar = this.body.createDiv({ cls: 'gkr-bottom-bar' });
     this.button(bar, '词典 / 双链', () => this.openKnowledgeWorkbench(question, parsed), 'gkr-primary gkr-main-action');
     this.button(bar, '补充元数据', () => this.openMetadata(question), 'gkr-tool-button');
