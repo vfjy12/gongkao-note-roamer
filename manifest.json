@@ -1,7 +1,7 @@
 {
   "id": "gongkao-note-roamer",
   "name": "考公笔记漫游",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "minAppVersion": "1.5.0",
   "description": "整卷精读、蒙题与考试模式，支持 iPad 临时手写草稿、集合潜在双链扫描及可选双链预览。 支持重启后恢复固定题单、作答与阅读位置。",
   "author": "Codex",
