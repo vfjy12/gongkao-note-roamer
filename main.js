@@ -43,9 +43,8 @@ const clampNumber = (value, fallback, min, max) => {
 };
 
 function temporaryInkPointerAllowed(pointerType, enabled) {
-  if (!enabled) return false;
   const type = text(pointerType).trim().toLowerCase();
-  return type === 'pen' || type === 'mouse';
+  return type === 'pen' || (type === 'mouse' && enabled);
 }
 
 function normalizeTemporaryInkPoint(clientX, clientY, rect = {}, pressure = 0.5) {
@@ -1404,6 +1403,7 @@ class RoamerView extends ItemView {
     this.lexiconEditorVisible = false;
     this.lastStudyModeClick = { key: '', at: 0 };
     this.temporaryInkEnabled = false;
+    this.temporaryInkTool = 'pen';
     this.temporaryInkStrokes = new Map();
     this.temporaryInkControllers = [];
     this.temporaryInkToolbar = null;
@@ -1530,6 +1530,7 @@ class RoamerView extends ItemView {
     this.destroyTemporaryInkControllers();
     this.temporaryInkStrokes.clear();
     this.temporaryInkEnabled = false;
+    this.temporaryInkTool = 'pen';
   }
 
   currentTemporaryInkPath() {
@@ -1550,8 +1551,10 @@ class RoamerView extends ItemView {
     const count = (this.temporaryInkStrokes.get(activePath) || []).length;
     toolbar.toggle.toggleClass('is-active', this.temporaryInkEnabled);
     toolbar.toggle.setAttribute('aria-pressed', String(this.temporaryInkEnabled));
-    toolbar.toggle.setAttribute('aria-label', this.temporaryInkEnabled ? '关闭临时草稿' : '打开临时草稿');
-    toolbar.label?.setText(this.temporaryInkEnabled ? '书写中' : '草稿');
+    toolbar.toggle.setAttribute('aria-label', this.temporaryInkEnabled ? '关闭鼠标书写，Pencil 仍自动开启' : '开启鼠标书写，Pencil 已自动开启');
+    toolbar.label?.setText(this.temporaryInkEnabled ? '鼠标书写' : 'Pencil 自动');
+    toolbar.eraser.toggleClass('is-active', this.temporaryInkTool === 'eraser');
+    toolbar.eraser.setAttribute('aria-pressed', String(this.temporaryInkTool === 'eraser'));
     toolbar.undo.disabled = count === 0;
     toolbar.clear.disabled = count === 0;
     toolbar.count?.setText(count ? `${count} 笔` : '退出即清空');
@@ -1564,13 +1567,19 @@ class RoamerView extends ItemView {
       this.temporaryInkEnabled = !this.temporaryInkEnabled;
       this.syncTemporaryInkToolbar();
       new Notice(this.temporaryInkEnabled
-        ? '临时草稿已开启：Apple Pencil 或鼠标可书写，手指仍可滚动和答题。'
-        : '临时草稿已暂停；已有笔迹仍暂时保留。', 2600);
+        ? '鼠标书写已开启；Pencil 始终自动书写，手指仍可滚动和答题。'
+        : '鼠标书写已关闭；Pencil 仍可直接书写。', 2600);
     }, `gkr-ink-button gkr-ink-toggle ${this.temporaryInkEnabled ? 'is-active' : ''}`);
     const toggleIcon = toggle.createSpan({ cls: 'gkr-ink-icon', attr: { 'aria-hidden': 'true' } });
     if (typeof setIcon === 'function') setIcon(toggleIcon, 'pencil');
-    const label = toggle.createSpan({ text: this.temporaryInkEnabled ? '书写中' : '草稿', cls: 'gkr-ink-label' });
+    const label = toggle.createSpan({ text: this.temporaryInkEnabled ? '鼠标书写' : 'Pencil 自动', cls: 'gkr-ink-label' });
     toggle.setAttribute('title', '临时草稿：只在本次作答中保留');
+
+    const eraser = this.button(group, '橡皮', () => {
+      this.temporaryInkTool = this.temporaryInkTool === 'eraser' ? 'pen' : 'eraser';
+      this.syncTemporaryInkToolbar();
+    }, 'gkr-ink-button gkr-ink-eraser');
+    eraser.setAttribute('title', '局部橡皮：用 Pencil 擦除，再次点击恢复书写');
 
     const undo = this.button(group, '', () => {
       const path = this.currentTemporaryInkPath();
@@ -1604,11 +1613,11 @@ class RoamerView extends ItemView {
       this.redrawTemporaryInk(path);
     }, 'gkr-ink-button gkr-ink-icon-button gkr-ink-clear');
     const clearIcon = clear.createSpan({ cls: 'gkr-ink-icon', attr: { 'aria-hidden': 'true' } });
-    if (typeof setIcon === 'function') setIcon(clearIcon, 'eraser');
+    if (typeof setIcon === 'function') setIcon(clearIcon, 'trash-2');
     clear.setAttribute('aria-label', '清空本题草稿');
     clear.setAttribute('title', '清空本题草稿');
     const count = group.createSpan({ text: '退出即清空', cls: 'gkr-ink-count' });
-    this.temporaryInkToolbar = { group, toggle, label, undo, clear, count };
+    this.temporaryInkToolbar = { group, toggle, label, eraser, undo, clear, count };
     this.syncTemporaryInkToolbar();
     return group;
   }
@@ -1634,6 +1643,7 @@ class RoamerView extends ItemView {
       const points = stroke?.points || [];
       if (!points.length) return;
       context.save();
+      context.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
       context.strokeStyle = stroke.color || '#7c3aed';
       context.fillStyle = stroke.color || '#7c3aed';
       context.lineCap = 'round';
@@ -1649,7 +1659,7 @@ class RoamerView extends ItemView {
       for (let pointIndex = 1; pointIndex < points.length; pointIndex += 1) {
         const previous = points[pointIndex - 1];
         const point = points[pointIndex];
-        context.lineWidth = Math.max(1.4, stroke.width * (0.72 + ((previous.pressure + point.pressure) / 2) * 0.56));
+        context.lineWidth = stroke.tool === 'eraser' ? stroke.width : Math.max(1.4, stroke.width * (0.72 + ((previous.pressure + point.pressure) / 2) * 0.56));
         context.beginPath();
         context.moveTo(previous.x * width, previous.y * height);
         context.lineTo(point.x * width, point.y * height);
@@ -1693,6 +1703,8 @@ class RoamerView extends ItemView {
       event.stopImmediatePropagation?.();
     };
     const onPointerDown = event => {
+      if (event.pointerType === 'touch') { suppressClickUntil = 0; return; }
+      if (activePointerId !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
       if (!temporaryInkPointerAllowed(event.pointerType, this.temporaryInkEnabled)) return;
       stopInkEvent(event);
       this.index = index;
@@ -1701,7 +1713,7 @@ class RoamerView extends ItemView {
       const color = getComputedStyle(surface).getPropertyValue('--interactive-accent').trim()
         || getComputedStyle(surface).color
         || '#7c3aed';
-      activeStroke = { color, width: event.pointerType === 'pen' ? 2.7 : 2.4, points: [pointFromEvent(event)] };
+      activeStroke = { color, tool: this.temporaryInkTool || 'pen', width: this.temporaryInkTool === 'eraser' ? 24 : (event.pointerType === 'pen' ? 2.7 : 2.4), points: [pointFromEvent(event)] };
       addTemporaryInkStroke(this.temporaryInkStrokes, path, activeStroke);
       activePointerId = event.pointerId;
       try { surface.setPointerCapture?.(event.pointerId); } catch { }
@@ -1712,6 +1724,7 @@ class RoamerView extends ItemView {
       if (!activeStroke || event.pointerId !== activePointerId) return;
       stopInkEvent(event);
       const events = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [event];
+      if (!events.length) events.push(event);
       events.forEach(coalesced => activeStroke.points.push(pointFromEvent(coalesced)));
       redraw();
     };
@@ -1727,9 +1740,16 @@ class RoamerView extends ItemView {
       this.syncTemporaryInkToolbar();
     };
     const suppressInkClick = event => {
-      if (Date.now() > suppressClickUntil) return;
+      if (event.pointerType === 'touch' || Date.now() > suppressClickUntil) return;
       stopInkEvent(event);
     };
+    const stopPencilTouch = event => {
+      const touches = [...(event.changedTouches || []), ...(event.touches || [])];
+      if (touches.some(touch => touch.touchType === 'stylus')) stopInkEvent(event);
+    };
+    for (const name of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+      surface.addEventListener(name, stopPencilTouch, { capture: true, passive: false });
+    }
     surface.addEventListener('pointerdown', onPointerDown, true);
     surface.addEventListener('pointermove', onPointerMove, true);
     surface.addEventListener('pointerup', finishStroke, true);
@@ -1764,6 +1784,9 @@ class RoamerView extends ItemView {
         surface.removeEventListener('pointerup', finishStroke, true);
         surface.removeEventListener('pointercancel', finishStroke, true);
         surface.removeEventListener('click', suppressInkClick, true);
+        for (const name of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+          surface.removeEventListener(name, stopPencilTouch, true);
+        }
         canvas.remove();
       }
     };
