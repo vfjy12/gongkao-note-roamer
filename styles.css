@@ -2877,3 +2877,9 @@
 .gkr-resume-session { margin: 16px 0; padding: 16px; background: var(--background-secondary); border-radius: var(--radius-m); }
 .gkr-resume-session p { margin: 8px 0; }
 .is-mobile .gkr-resume-session button { min-height: 44px; }
+
+.gkr-technique-insights { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--background-modifier-border); }
+.gkr-technique-entry { margin: 8px 0; border-bottom: 1px solid var(--background-modifier-border); }
+.gkr-technique-entry > summary { padding: 12px 4px; cursor: pointer; font-weight: 600; }
+.gkr-technique-entry > div { padding: 4px 8px 16px; }
+.gkr-technique-guess { margin-top: 16px; }
