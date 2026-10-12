@@ -2483,6 +2483,7 @@ class RoamerView extends ItemView {
     this.allQuestions.forEach(update);
     this.collectionItems.forEach(update);
     this.questions.forEach(update);
+    await this.plugin.notifyStudyTask(question.path, 'intensive', completed);
     new Notice(completed ? '已标记本题精读完成。' : '已取消本题精读完成。');
   }
 
@@ -2869,6 +2870,7 @@ class RoamerView extends ItemView {
       : null;
     const recordedAt = new Date().toISOString();
     this.answers.set(question.path, { ...state, elapsed, correct, timedOut, recordedAt });
+    if (state.choice && state.choice !== 'DONE') await this.plugin.notifyStudyTask(question.path, 'answered', true);
     this.revealed.add(question.path);
     const activeControls = controls || this.body?.querySelector('.gkr-choice-section');
     if (activeControls) await this.revealGuessInPlace(activeControls, question, parsed);
@@ -3590,6 +3592,7 @@ class RoamerView extends ItemView {
         ? parsed.correctAnswer === state.choice
         : null;
       this.answers.set(question.path, { ...state, correct, correctAnswer: parsed.correctAnswer });
+      if (state.choice && state.choice !== 'DONE') await this.plugin.notifyStudyTask(question.path, 'answered', true);
     }
     this.renderExamResults(timedOut);
   }
@@ -3758,6 +3761,13 @@ class GongkaoNoteRoamer extends Plugin {
     await Promise.all(this.app.workspace.getLeavesOfType(VIEW_TYPE).map(leaf => this.persistLearningSession(leaf.view)));
     this.clearOriginalReturnControls();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+  }
+
+  async notifyStudyTask(path, field, value) {
+    const task = this.app.plugins?.plugins?.['exam-study-tasks'];
+    if (typeof task?.recordRoamerProgress !== 'function') return;
+    try { await task.recordRoamerProgress(path, field, value); }
+    catch (error) { new Notice('学习任务联动未保存：' + error.message, 6000); }
   }
 
   async saveSettings() {
