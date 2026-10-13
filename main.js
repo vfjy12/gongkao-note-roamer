@@ -1521,6 +1521,7 @@ class RoamerView extends ItemView {
   }
 
   unloadRenderComponents() {
+    this.methodPopupCleanup?.();
     this.renderComponents.forEach(component => component.unload());
     this.renderComponents = [];
     this.destroyTemporaryInkControllers();
@@ -2451,7 +2452,7 @@ class RoamerView extends ItemView {
       const chips = head.createDiv({ cls: 'gkr-chips gkr-paper-chips' });
       [question.region, question.subject, question.module, ...question.topics, ...question.mistakes]
         .filter(Boolean).slice(0, 6)
-        .forEach(value => chips.createSpan({ text: value, cls: 'gkr-chip' }));
+        .forEach(value => {const chip=chips.createSpan({text:value,cls:'gkr-chip'});chip.setAttribute('role','button');chip.setAttribute('tabindex','0');chip.onclick=()=>this.openMethodMatch(question.path,'题干标注',chip);chip.onkeydown=e=>{if(e.key==='Enter')chip.click();};});
     }
 
     const questionContent = article.createDiv({ cls: 'gkr-markdown gkr-selectable gkr-paper-question-content' });
@@ -2817,16 +2818,18 @@ class RoamerView extends ItemView {
     });
   }
   renderInlineAnalysisButton(parent,path,section){
-    this.button(parent,section.replace('标注','分析'),()=>this.openSectionAnalysis(path,section),'gkr-tool-button gkr-inline-analysis');
+    this.button(parent,section.replace('标注','分析'),()=>this.openMethodMatch(path,section,parent),'gkr-tool-button gkr-inline-analysis');
   }
-  renderTechniqueReminders(parent,path){
-    const question=this.questions?.find(q=>q.path===path);const fm=question?.file ? (this.app.metadataCache.getFileCache(question.file)?.frontmatter||{}) : {};
-    const tags=[question?.subject,question?.module,...(question?.topics||[]),...(Array.isArray(fm.tags)?fm.tags:typeof fm.tags==='string'?[fm.tags]:[])].filter(Boolean);
-    const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];
-    const matches=handbook?.reminders?.(tags)||[];
-    if(!matches.length)return;
-    const details=parent.createEl('details',{cls:'gkr-tag-reminders'});details.createEl('summary',{text:'标签技巧提醒 · '+matches.length});
-    for(const entry of matches){details.createEl('p',{text:(entry.fm.teacher||'未标老师')+' · '+entry.file.basename+'：'+entry.fm.reminder});this.button(details,'查看方法',()=>this.plugin.openLinkFromRoamer(entry.file.path,path,this.leaf),'gkr-tool-button');}
+  methodCandidates(path){const question=this.questions?.find(q=>q.path===path);const fm=question?.file?this.app.metadataCache.getFileCache(question.file)?.frontmatter||{}:{};const tags=[question?.subject,question?.module,...(question?.topics||[]),...(Array.isArray(fm.tags)?fm.tags:[])].filter(Boolean);return this.app.plugins?.plugins?.['exam-technique-handbook']?.methodsFor?.(tags)||[];}
+  renderTechniqueReminders(parent,path){const matches=this.methodCandidates(path);if(matches.length)this.button(parent,'查看匹配的方法体系',()=>this.openMethodMatch(path,'题干标注',parent),'gkr-tool-button');}
+  openMethodMatch(path,section,anchor){
+    this.methodPopupCleanup?.();const doc=anchor.ownerDocument||document;const pop=doc.createElement('div');pop.className='gkr-method-popup';doc.body.appendChild(pop);const rect=anchor.getBoundingClientRect();pop.style.top=Math.min(rect.bottom+8,Math.max(8,doc.defaultView.innerHeight-520))+'px';pop.style.left=Math.max(8,Math.min(rect.left,doc.defaultView.innerWidth-440))+'px';
+    let token=0;const components=[];const close=()=>{token++;components.splice(0).forEach(c=>c.unload());pop.remove();doc.removeEventListener('pointerdown',outside,true);doc.removeEventListener('keydown',escape,true);this.methodPopupCleanup=null;};const outside=e=>{if(!pop.contains(e.target)&&!anchor.contains(e.target))close();};const escape=e=>{if(e.key==='Escape')close();};doc.addEventListener('pointerdown',outside,true);doc.addEventListener('keydown',escape,true);this.methodPopupCleanup=close;
+    pop.createEl('h4',{text:section.replace('标注','归类')});this.button(pop,'关闭',close,'gkr-tool-button');const candidates=this.methodCandidates(path);const systems=[...new Set(candidates.map(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')))];const systemSelect=pop.createEl('select');for(const name of systems)systemSelect.createEl('option',{text:name,value:name});const select=pop.createEl('select');const content=pop.createDiv({cls:'gkr-markdown'});let chosen=null;
+    const show=async()=>{const seq=++token;components.splice(0).forEach(c=>c.unload());content.empty();chosen=candidates.find(x=>x.file.path===select.value);if(!chosen)return;const target=content.createDiv();try{const source=await this.app.vault.read(chosen.file);if(seq!==token)return;const c=new Component();c.load();components.push(c);await MarkdownRenderer.render(this.app,source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,''),target,chosen.file.path,c);if(seq!==token)return;for(const [label,key]of [['关键词/线索','keywords'],['典型正确选项','correct_patterns'],['典型错误选项','wrong_patterns']])if(chosen.fm[key])await MarkdownRenderer.render(this.app,'**'+label+'**\n'+chosen.fm[key],target,chosen.file.path,c);}catch(e){if(seq===token)target.createEl('p',{text:e.message});}};
+    const chooseSystem=()=>{select.empty();candidates.filter(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')===systemSelect.value).forEach(x=>select.createEl('option',{text:x.fm.title||x.file.basename,value:x.file.path}));void show();};systemSelect.onchange=chooseSystem;select.onchange=()=>void show();
+    const pattern=pop.createEl('input',{placeholder:'典型类别：从方法中的类别复制或填写'});const quote=pop.createEl('textarea',{placeholder:'原题片段/关键词（保留原文，可写 [[双链]]）'});const notes=pop.createEl('textarea',{placeholder:'人工复核说明（支持 [[双链]]）'});const question=this.questions.find(q=>q.path===path);const save=this.button(pop,'确认匹配已有方法',async()=>{if(!chosen)return;save.disabled=true;try{await this.app.plugins.plugins['exam-technique-handbook'].saveMatch(question,chosen,section,pattern.value,quote.value,notes.value);new Notice('已保存本题与已有方法的匹配，未新建技巧。');close();}catch(e){new Notice(e.message);save.disabled=false;}},'gkr-tool-button');
+    if(systems.length)chooseSystem();else{content.createEl('p',{text:'没有匹配题目分类的方法。先在技巧宝典给模块/题型分支设置触发标签，下级方法会继承。'});save.disabled=true;}
   }
   openSectionAnalysis(path,section){
     const modal=new Modal(this.app);const el=modal.contentEl;el.createEl('h3',{text:section.replace('标注','分析')});
