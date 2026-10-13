@@ -2883,3 +2883,5 @@
 .gkr-technique-entry > summary { padding: 12px 4px; cursor: pointer; font-weight: 600; }
 .gkr-technique-entry > div { padding: 4px 8px 16px; }
 .gkr-technique-guess { margin-top: 16px; }
+
+.gkr-root button.gkr-inline-analysis{min-height:44px}.gkr-static-option>.gkr-inline-analysis{flex-shrink:0;margin-left:auto}.gkr-tag-reminders{width:100%;padding:8px 0}.gkr-tag-reminders summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.gkr-tag-reminders p{white-space:pre-wrap}@media(max-width:600px){.gkr-static-option{flex-wrap:wrap}.gkr-static-option>.gkr-inline-analysis{margin-left:40px}}
