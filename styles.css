@@ -2885,3 +2885,5 @@
 .gkr-technique-guess { margin-top: 16px; }
 
 .gkr-root button.gkr-inline-analysis{min-height:44px}.gkr-static-option>.gkr-inline-analysis{flex-shrink:0;margin-left:auto}.gkr-tag-reminders{width:100%;padding:8px 0}.gkr-tag-reminders summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.gkr-tag-reminders p{white-space:pre-wrap}@media(max-width:600px){.gkr-static-option{flex-wrap:wrap}.gkr-static-option>.gkr-inline-analysis{margin-left:40px}}
+
+.gkr-method-popup{position:fixed;z-index:10000;width:min(420px,calc(100vw - 16px));max-height:70vh;overflow:auto;padding:16px;border:1px solid var(--background-modifier-border);border-radius:12px;background:var(--background-primary);color:var(--text-normal);box-shadow:0 8px 32px #0003}.gkr-method-popup select,.gkr-method-popup input,.gkr-method-popup textarea{display:block;width:100%;margin:8px 0;min-height:40px}.gkr-method-popup textarea{min-height:70px}
