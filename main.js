@@ -1521,6 +1521,7 @@ class RoamerView extends ItemView {
   }
 
   unloadRenderComponents() {
+    this.floatingToolsCleanup?.();
     this.methodPopupCleanup?.();
     this.renderComponents.forEach(component => component.unload());
     this.renderComponents = [];
@@ -2485,26 +2486,7 @@ class RoamerView extends ItemView {
     await this.renderMarkdown(answerContent, parsed.answerMarkdown, question.path);
     this.watchSelection(answerContent, question, '答案解析', parsed);
     await this.renderTechniqueInsights(answerSection, question);
-    const tools = article.createDiv({ cls: 'gkr-paper-inline-tools' });
-    const complete = this.button(tools, question.intensiveDone ? '取消精读完成' : '标记精读完成', async () => {
-      complete.disabled = true;
-      try {
-        await this.setIntensiveDone(question, !question.intensiveDone);
-        complete.setText(question.intensiveDone ? '取消精读完成' : '标记精读完成');
-        complete.toggleClass('is-complete', question.intensiveDone);
-        complete.setAttribute('aria-pressed', String(question.intensiveDone));
-        article.toggleClass('is-intensive-done', question.intensiveDone);
-        this.updateIntensiveProgressDom();
-      } catch (error) {
-        new Notice(`精读状态保存失败：${error.message}`);
-      } finally {
-        complete.disabled = false;
-      }
-    }, `gkr-tool-button gkr-intensive-toggle ${question.intensiveDone ? 'is-complete' : ''}`);
-    complete.setAttribute('aria-pressed', String(question.intensiveDone));
-    this.button(tools, '词典 / 双链', () => this.openKnowledgeWorkbench(question, parsed), 'gkr-primary gkr-main-action');
-    this.button(tools, '补充元数据', () => this.openMetadata(question), 'gkr-tool-button');
-    this.button(tools, '原笔记', () => this.openOriginalNote(question), 'gkr-tool-button');
+    this.mountFloatingStudyTools();
   }
 
   async setIntensiveDone(question, completed) {
@@ -2820,16 +2802,34 @@ class RoamerView extends ItemView {
   renderInlineAnalysisButton(parent,path,section){
     this.button(parent,section.replace('标注','分析'),()=>this.openMethodMatch(path,section,parent),'gkr-tool-button gkr-inline-analysis');
   }
+
+  renderSystemCards(parent,question){
+    this.activeMethodSystems ||=new Map();const candidates=this.methodCandidates(question.path);const systems=[...new Set(candidates.map(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')))];if(!systems.length)return;const cards=parent.createDiv({cls:'gkr-system-cards'});const selected=this.activeMethodSystems.get(question.path)||systems[0];this.activeMethodSystems.set(question.path,selected);
+    for(const system of systems){const b=this.button(cards,system,()=>{this.methodPopupCleanup?.();this.activeMethodSystems.set(question.path,system);cards.querySelectorAll('button').forEach(btn=>{const active=btn===b;btn.toggleClass('is-active',active);btn.setAttribute('aria-pressed',String(active));});},'gkr-system-card');b.toggleClass('is-active',system===selected);b.setAttribute('aria-pressed',String(system===selected));}
+  }
+  mountFloatingStudyTools(){
+    if(this.floatingToolbar?.isConnected)return;const doc=this.contentEl.ownerDocument;const win=doc.defaultView;const bar=this.rootEl.createDiv({cls:'gkr-floating-tools'});this.floatingToolbar=bar;bar.setAttribute('aria-label','当前题目工具');const handle=bar.createEl('button',{text:'⠿',cls:'gkr-tools-handle',attr:{'aria-label':'拖动工具栏'}});const identity=bar.createSpan();const fold=this.button(bar,'收起',()=>{const collapsed=bar.classList.toggle('is-collapsed');fold.setText(collapsed?'展开':'收起');fold.setAttribute('aria-expanded',String(!collapsed));},'gkr-tool-button');fold.setAttribute('aria-expanded','true');
+    const current=()=>{const articles=[...this.rootEl.querySelectorAll('.gkr-paper-question')];const visible=articles.filter(el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<win.innerHeight;});if(visible.length){visible.sort((a,b)=>Math.abs(a.getBoundingClientRect().top-100)-Math.abs(b.getBoundingClientRect().top-100));const index=Number(visible[0].dataset.gkrQuestionIndex);if(Number.isFinite(index))this.index=index;}return this.questions[this.index];};
+    const run=fn=>async()=>{const q=current();if(!q)return;try{await fn(q,await this.readParsed(q));}catch(e){new Notice(e.message);}};
+    const complete=this.button(bar,'标记精读完成',run(q=>this.setIntensiveDone(q,!q.intensiveDone)),'gkr-tool-button gkr-tools-action');const capture=this.button(bar,'入词典',run((q,p)=>{const picked=this.selectedTextForQuestion(q);if(!picked.selected)return new Notice('请先选中文字。');const dictionary=this.dictionaryPlugin();if(!dictionary?.captureToLexicon)return new Notice('请升级并启用考公词典。');return this.createLexiconAndLink(q,p,picked.selected,picked.section,picked.selected); }),'gkr-primary gkr-tools-action');capture.addEventListener('pointerdown',e=>e.preventDefault());this.button(bar,'双链',run((q,p)=>this.openKnowledgeWorkbench(q,p)),'gkr-tool-button gkr-tools-action');this.button(bar,'补充元数据',run(q=>this.openMetadata(q)),'gkr-tool-button gkr-tools-action');this.button(bar,'原笔记',run(q=>this.openOriginalNote(q)),'gkr-tool-button gkr-tools-action');this.button(bar,'本题潜在链接',run(q=>this.openCurrentPotentialLinks(q)),'gkr-tool-button gkr-tools-action');
+    let x=24,y=win.innerHeight-90,drag=null,frame=null;const place=(px,py)=>{const r=bar.getBoundingClientRect();x=Math.max(8,Math.min(px,win.innerWidth-r.width-8));y=Math.max(8,Math.min(py,win.innerHeight-r.height-8));bar.style.left=x+'px';bar.style.top=y+'px';};
+    try{const saved=JSON.parse(win.localStorage.getItem('gkr-floating-tools'));if(saved){x=saved.x;y=saved.y;bar.toggleClass('is-vertical',saved.vertical);}}catch{}
+    const finish=e=>{if(!drag||drag.id!==e.pointerId)return;drag=null;const r=bar.getBoundingClientRect();const sides=[{vertical:true,d:r.left},{vertical:true,d:win.innerWidth-r.right},{vertical:false,d:r.top},{vertical:false,d:win.innerHeight-r.bottom}].sort((a,b)=>a.d-b.d);if(sides[0].d<48)bar.toggleClass('is-vertical',sides[0].vertical);place(x,y);try{win.localStorage.setItem('gkr-floating-tools',JSON.stringify({x,y,vertical:bar.classList.contains('is-vertical')}));}catch{}};
+    handle.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();drag={id:e.pointerId,dx:e.clientX-x,dy:e.clientY-y};handle.setPointerCapture(e.pointerId);};handle.onpointermove=e=>{if(drag&&drag.id===e.pointerId)place(e.clientX-drag.dx,e.clientY-drag.dy);};handle.onpointerup=finish;handle.onpointercancel=finish;
+    const update=()=>{if(frame)return;frame=win.requestAnimationFrame(()=>{frame=null;const q=current();identity.setText('第 '+(this.index+1)+' 题');complete.setText(q?.intensiveDone?'取消精读完成':'标记精读完成');});};const resize=()=>place(x,y);doc.addEventListener('scroll',update,true);win.addEventListener('resize',resize);place(x,y);update();this.floatingToolsCleanup=()=>{if(frame)win.cancelAnimationFrame(frame);doc.removeEventListener('scroll',update,true);win.removeEventListener('resize',resize);bar.remove();this.floatingToolbar=null;this.floatingToolsCleanup=null;};
+  }
+  async openCurrentPotentialLinks(question){const dictionary=this.dictionaryPlugin();if(!dictionary?.listLexiconEntries)return new Notice('请先启用考公词典。');new CollectionPotentialLinksModal(this.app,{collectionTitle:question.name,scan:async progress=>scanCollectionPotentialLinks([question],await dictionary.listLexiconEntries(),q=>this.app.vault.cachedRead?.(q.file)||this.app.vault.read(q.file),progress),apply:selected=>this.applyCollectionPotentialLinks(selected)}).open();}
+
   methodCandidates(path){const question=this.questions?.find(q=>q.path===path);const fm=question?.file?this.app.metadataCache.getFileCache(question.file)?.frontmatter||{}:{};const tags=[question?.subject,question?.module,...(question?.topics||[]),...(Array.isArray(fm.tags)?fm.tags:[])].filter(Boolean);return this.app.plugins?.plugins?.['exam-technique-handbook']?.methodsFor?.(tags)||[];}
   renderTechniqueReminders(parent,path){const matches=this.methodCandidates(path);if(matches.length)this.button(parent,'查看匹配的方法体系',()=>this.openMethodMatch(path,'题干标注',parent),'gkr-tool-button');}
   openMethodMatch(path,section,anchor){
     this.methodPopupCleanup?.();const doc=anchor.ownerDocument||document;const pop=doc.createElement('div');pop.className='gkr-method-popup';doc.body.appendChild(pop);const rect=anchor.getBoundingClientRect();pop.style.top=Math.min(rect.bottom+8,Math.max(8,doc.defaultView.innerHeight-520))+'px';pop.style.left=Math.max(8,Math.min(rect.left,doc.defaultView.innerWidth-440))+'px';
     let token=0;const components=[];const close=()=>{token++;components.splice(0).forEach(c=>c.unload());pop.remove();doc.removeEventListener('pointerdown',outside,true);doc.removeEventListener('keydown',escape,true);this.methodPopupCleanup=null;};const outside=e=>{if(!pop.contains(e.target)&&!anchor.contains(e.target))close();};const escape=e=>{if(e.key==='Escape')close();};doc.addEventListener('pointerdown',outside,true);doc.addEventListener('keydown',escape,true);this.methodPopupCleanup=close;
-    pop.createEl('h4',{text:section.replace('标注','归类')});this.button(pop,'关闭',close,'gkr-tool-button');const candidates=this.methodCandidates(path);const systems=[...new Set(candidates.map(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')))];const systemSelect=pop.createEl('select');for(const name of systems)systemSelect.createEl('option',{text:name,value:name});const select=pop.createEl('select');const content=pop.createDiv({cls:'gkr-markdown'});let chosen=null;
+    pop.createEl('h4',{text:section.replace('标注','归类')});this.button(pop,'关闭',close,'gkr-tool-button');const position=section.startsWith('题干')?'stem':section.startsWith('问题')?'problem':'option';const candidates=this.methodCandidates(path).filter(x=>!Array.isArray(x.fm.roam_positions)||x.fm.roam_positions.includes(position));const systems=[...new Set(candidates.map(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')))];const systemSelect=pop.createEl('select');for(const name of systems)systemSelect.createEl('option',{text:name,value:name});const select=pop.createEl('select');const content=pop.createDiv({cls:'gkr-markdown'});let chosen=null;
     const show=async()=>{const seq=++token;components.splice(0).forEach(c=>c.unload());content.empty();chosen=candidates.find(x=>x.file.path===select.value);if(!chosen)return;const target=content.createDiv();try{const source=await this.app.vault.read(chosen.file);if(seq!==token)return;const c=new Component();c.load();components.push(c);await MarkdownRenderer.render(this.app,source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,''),target,chosen.file.path,c);if(seq!==token)return;for(const [label,key]of [['关键词/线索','keywords'],['典型正确选项','correct_patterns'],['典型错误选项','wrong_patterns']])if(chosen.fm[key])await MarkdownRenderer.render(this.app,'**'+label+'**\n'+chosen.fm[key],target,chosen.file.path,c);}catch(e){if(seq===token)target.createEl('p',{text:e.message});}};
-    const chooseSystem=()=>{select.empty();candidates.filter(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')===systemSelect.value).forEach(x=>select.createEl('option',{text:x.fm.title||x.file.basename,value:x.file.path}));void show();};systemSelect.onchange=chooseSystem;select.onchange=()=>void show();
-    const pattern=pop.createEl('input',{placeholder:'典型类别：从方法中的类别复制或填写'});const quote=pop.createEl('textarea',{placeholder:'原题片段/关键词（保留原文，可写 [[双链]]）'});const notes=pop.createEl('textarea',{placeholder:'人工复核说明（支持 [[双链]]）'});const question=this.questions.find(q=>q.path===path);const save=this.button(pop,'确认匹配已有方法',async()=>{if(!chosen)return;save.disabled=true;try{await this.app.plugins.plugins['exam-technique-handbook'].saveMatch(question,chosen,section,pattern.value,quote.value,notes.value);new Notice('已保存本题与已有方法的匹配，未新建技巧。');close();}catch(e){new Notice(e.message);save.disabled=false;}},'gkr-tool-button');
-    if(systems.length)chooseSystem();else{content.createEl('p',{text:'没有匹配题目分类的方法。先在技巧宝典给模块/题型分支设置触发标签，下级方法会继承。'});save.disabled=true;}
+    const chooseSystem=()=>{select.empty();candidates.filter(x=>(x.fm.teacher||'未标老师')+' / '+(x.fm.system_id||x.fm.teacher||'未标体系')===systemSelect.value).forEach(x=>select.createEl('option',{text:(x.fm.node_role?'['+x.fm.node_role+'] ':'')+(x.fm.title||x.file.basename),value:x.file.path}));void show();};systemSelect.onchange=chooseSystem;select.onchange=()=>void show();
+    const pattern=pop.createEl('input',{placeholder:'典型类别：从方法中的类别复制或填写'});const quote=pop.createEl('textarea',{placeholder:'原题片段/关键词（保留原文，可写 [[双链]]）'});const notes=pop.createEl('textarea',{placeholder:'人工复核说明（支持 [[双链]]）'});const question=this.questions.find(q=>q.path===path);const save=this.button(pop,'确认匹配已有方法',async()=>{if(!chosen)return;save.disabled=true;try{await this.app.plugins.plugins['exam-technique-handbook'].saveMatch(question,chosen,section,pattern.value||chosen.fm.node_role||'',quote.value,notes.value);new Notice('已保存本题与已有方法的匹配，未新建技巧。');close();}catch(e){new Notice(e.message);save.disabled=false;}},'gkr-tool-button');
+    if(systems.length){const preferred=this.activeMethodSystems?.get(path);if(systems.includes(preferred))systemSelect.value=preferred;chooseSystem();}else{content.createEl('p',{text:'没有匹配题目分类的方法。先在技巧宝典给模块/题型分支设置触发标签，下级方法会继承。'});save.disabled=true;}
   }
   openSectionAnalysis(path,section){
     const modal=new Modal(this.app);const el=modal.contentEl;el.createEl('h3',{text:section.replace('标注','分析')});
@@ -2851,6 +2851,7 @@ class RoamerView extends ItemView {
   async renderTechniqueInsights(parent, question) {
     const panel = parent.createEl('section', { cls: 'gkr-technique-insights' });
     panel.createEl('h4', { text: '解题思路与技巧' });
+    this.renderSystemCards(panel,question);
     const actions = panel.createDiv({ cls: 'gkr-paper-inline-tools' });
     for(const section of ['题干标注','问题标注','选项 A 标注','选项 B 标注','选项 C 标注','选项 D 标注'])this.renderInlineAnalysisButton(actions,question.path,section);
     this.renderTechniqueReminders(actions,question.path);
