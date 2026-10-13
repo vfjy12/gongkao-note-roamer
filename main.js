@@ -3,6 +3,12 @@ const {
   Modal, PluginSettingTab, Setting, Platform, Menu, setIcon
 } = require('obsidian');
 
+
+function techniqueAnalysisSections(source){
+ const sections={};let title='';let fence=false;
+ for(const line of source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,'').split(/\r?\n/)){if(line.startsWith('```'))fence=!fence;const h=!fence&&line.match(/^##\s+(.+)$/);if(h){title=h[1].trim();sections[title]='';}else if(title)sections[title]+=line+'\n';}return sections;
+}
+
 const VIEW_TYPE = 'gongkao-note-roamer';
 const GROUP_MODES = {
   paper: '按卷子',
@@ -2298,6 +2304,7 @@ class RoamerView extends ItemView {
       row.createSpan({ text: option.key, cls: 'gkr-choice-key' });
       const label = row.createDiv({ cls: 'gkr-choice-label gkr-markdown' });
       await this.renderOptionLabel(label, option.label, sourcePath);
+      this.renderInlineAnalysisButton(row, sourcePath, '选项 '+option.key+' 标注');
     }
   }
 
@@ -2309,7 +2316,13 @@ class RoamerView extends ItemView {
   async renderQuestionContent(parent, parsed, sourcePath, includeStaticOptions = false) {
     const markdown = hideAnswerMarkers(parsed.options.length ? parsed.stemMarkdown : parsed.questionMarkdown);
     await this.renderMarkdown(parent, markdown, sourcePath);
-    if (includeStaticOptions) await this.renderStaticOptions(parent, parsed.options, sourcePath);
+    if (includeStaticOptions) {
+      const tools=parent.createDiv({cls:'gkr-paper-inline-tools'});
+      this.renderInlineAnalysisButton(tools,sourcePath,'题干标注');
+      this.renderInlineAnalysisButton(tools,sourcePath,'问题标注');
+      this.renderTechniqueReminders(tools,sourcePath);
+      await this.renderStaticOptions(parent, parsed.options, sourcePath);
+    }
   }
 
   gotoQuestion(index) {
@@ -2793,10 +2806,51 @@ class RoamerView extends ItemView {
     return answerSection;
   }
 
+
+  techniqueAnalyses(path){
+    const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];
+    const candidates=handbook?.entries?.() || this.app.vault.getMarkdownFiles().map(file=>({file,fm:this.app.metadataCache.getFileCache(file)?.frontmatter||{}}));
+    return candidates.filter(({file,fm})=>{
+      if(fm.note_type!=='technique_analysis'||typeof fm.question_note!=='string')return false;
+      const link=fm.question_note.trim().replace(/^\[\[/,'').replace(/\]\]$/,'').split('|')[0].split('#')[0];
+      return (this.app.vault.getAbstractFileByPath(link)||this.app.metadataCache.getFirstLinkpathDest(link,file.path))?.path===path;
+    });
+  }
+  renderInlineAnalysisButton(parent,path,section){
+    this.button(parent,section.replace('标注','分析'),()=>this.openSectionAnalysis(path,section),'gkr-tool-button gkr-inline-analysis');
+  }
+  renderTechniqueReminders(parent,path){
+    const question=this.questions?.find(q=>q.path===path);const fm=question?.file ? (this.app.metadataCache.getFileCache(question.file)?.frontmatter||{}) : {};
+    const tags=[question?.subject,question?.module,...(question?.topics||[]),...(Array.isArray(fm.tags)?fm.tags:typeof fm.tags==='string'?[fm.tags]:[])].filter(Boolean);
+    const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];
+    const matches=handbook?.reminders?.(tags)||[];
+    if(!matches.length)return;
+    const details=parent.createEl('details',{cls:'gkr-tag-reminders'});details.createEl('summary',{text:'标签技巧提醒 · '+matches.length});
+    for(const entry of matches){details.createEl('p',{text:(entry.fm.teacher||'未标老师')+' · '+entry.file.basename+'：'+entry.fm.reminder});this.button(details,'查看方法',()=>this.plugin.openLinkFromRoamer(entry.file.path,path,this.leaf),'gkr-tool-button');}
+  }
+  openSectionAnalysis(path,section){
+    const modal=new Modal(this.app);const el=modal.contentEl;el.createEl('h3',{text:section.replace('标注','分析')});
+    const entries=this.techniqueAnalyses(path);const teachers=[...new Set(entries.map(x=>x.fm.teacher||'未标老师'))];
+    const nav=el.createDiv({cls:'gkr-paper-inline-tools'});const body=el.createDiv({cls:'gkr-markdown'});let token=0;const components=[];
+    const show=async teacher=>{const seq=++token;components.splice(0).forEach(c=>c.unload());body.empty();const target=body.createDiv({cls:'gkr-analysis-generation'});this.techniqueTeacherByPath ||=new Map();this.techniqueTeacherByPath.set(path,teacher);
+      for(const entry of entries.filter(x=>(x.fm.teacher||'未标老师')===teacher)){
+        try{const source=await this.app.vault.read(entry.file);if(seq!==token)return;const sections=techniqueAnalysisSections(source);target.createEl('h4',{text:entry.file.basename+' · '+(entry.fm.evidence_role||'待核对')});const content=sections[section]||'';if(!content.trim())target.createEl('p',{text:'此老师尚未填写本部分分析。'});else{const c=new Component();c.load();components.push(c);await MarkdownRenderer.render(this.app,content,target,entry.file.path,c);if(seq!==token)return;resolveRenderedImages(this.app,target,entry.file.path);}this.button(target,'编辑原分析',()=>this.plugin.openLinkFromRoamer(entry.file.path,path,this.leaf),'gkr-tool-button');
+        }catch(error){if(seq!==token)return;target.createEl('p',{text:'读取失败：'+error.message});}
+      }
+    };
+    teachers.forEach(t=>this.button(nav,t,()=>show(t),'gkr-tool-button'));
+    const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];if(handbook?.createQuestionAnalysis)this.button(nav,'添加本题分析',()=>handbook.createQuestionAnalysis(path),'gkr-tool-button');
+    if(!teachers.length)body.createEl('p',{text:'本题尚无老师分析。添加分析时分别填写题干、问题和各选项。'});
+    modal.onClose=()=>{token++;components.splice(0).forEach(c=>c.unload());};modal.open();
+    if(teachers.length)void show(teachers.includes(this.techniqueTeacherByPath?.get(path))?this.techniqueTeacherByPath.get(path):teachers[0]);
+  }
+
   async renderTechniqueInsights(parent, question) {
     const panel = parent.createEl('section', { cls: 'gkr-technique-insights' });
     panel.createEl('h4', { text: '解题思路与技巧' });
     const actions = panel.createDiv({ cls: 'gkr-paper-inline-tools' });
+    for(const section of ['题干标注','问题标注','选项 A 标注','选项 B 标注','选项 C 标注','选项 D 标注'])this.renderInlineAnalysisButton(actions,question.path,section);
+    this.renderTechniqueReminders(actions,question.path);
     const handbook = this.app.plugins?.plugins?.['exam-technique-handbook'];
     if (handbook?.createQuestionAnalysis) {
       this.button(actions, '添加老师 / 个人思路', () => handbook.createQuestionAnalysis(question.path), 'gkr-tool-button');
@@ -2809,13 +2863,7 @@ class RoamerView extends ItemView {
     const refresh = async () => {
       const token = ++generation;
       content.empty();
-      const entries = this.app.vault.getMarkdownFiles().map(file => ({ file, fm: this.app.metadataCache.getFileCache(file)?.frontmatter || {} }))
-        .filter(({ file, fm }) => {
-          if (fm.note_type !== 'technique_analysis' || typeof fm.question_note !== 'string') return false;
-          const link = fm.question_note.trim().replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].split('#')[0];
-          const resolved = this.app.vault.getAbstractFileByPath(link) || this.app.metadataCache.getFirstLinkpathDest(link, file.path);
-          return resolved?.path === question.path;
-        }).sort((a, b) => String(a.fm.teacher || '').localeCompare(String(b.fm.teacher || '')) || a.file.path.localeCompare(b.file.path));
+      const entries = this.techniqueAnalyses(question.path).sort((a,b)=>String(a.fm.teacher||'').localeCompare(String(b.fm.teacher||''))||a.file.path.localeCompare(b.file.path));
       if (!entries.length) content.createEl('p', { text: '本题尚未关联老师分析。点击“添加老师 / 个人思路”，填写老师及内容后保存。', cls: 'gkr-muted' });
       for (const { file, fm } of entries) {
         const item = content.createEl('details', { cls: 'gkr-technique-entry' });
@@ -4162,6 +4210,7 @@ GongkaoNoteRoamer.__test = {
   normalizedIntensiveStatus,
   applyIntensiveFrontmatter,
   studyModeClickAction,
+  techniqueAnalysisSections,
   temporaryInkPointerAllowed,
   normalizeTemporaryInkPoint,
   addTemporaryInkStroke,
