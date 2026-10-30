@@ -3004,6 +3004,8 @@ class RoamerView extends ItemView {
     if (activeControls) await this.revealGuessInPlace(activeControls, question, parsed);
     try {
       await this.appendGuessLog(question, this.answers.get(question.path));
+      const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];
+      if(handbook?.archiveGuess) await handbook.archiveGuess(question,this.answers.get(question.path),correctAnswer);
     } catch (error) {
       new Notice(`蒙题记录未写入 YAML：${error.message}`);
     }
@@ -3112,6 +3114,8 @@ class RoamerView extends ItemView {
       save.disabled = true;
       try {
         await this.saveTechniqueSummary(question, state.recordedAt, textarea.value.trim());
+        const handbook=this.app.plugins?.plugins?.['exam-technique-handbook'];
+        if(handbook?.archiveGuess) await handbook.archiveGuess(question,{...this.answers.get(question.path),techniqueSummary:textarea.value.trim()},singleCorrectAnswerKey((await this.readParsed(question)).correctAnswer));
         this.answers.set(question.path, { ...this.answers.get(question.path), techniqueSummary: textarea.value.trim() });
         new Notice('蒙题技巧已写入题目 YAML。');
       } catch (error) {
